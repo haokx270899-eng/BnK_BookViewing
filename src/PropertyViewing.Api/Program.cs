@@ -1,0 +1,23 @@
+using PropertyViewing.Application.Exceptions;
+using PropertyViewing.Application.Interfaces;
+using PropertyViewing.Application.Services;
+using PropertyViewing.Infrastructure;
+
+var builder = WebApplication.CreateBuilder(args);
+builder.Services.AddControllers(); 
+builder.Services.AddEndpointsApiExplorer(); 
+builder.Services.AddSwaggerGen();
+builder.Services.AddInfrastructure(builder.Configuration); 
+builder.Services.AddScoped<IViewingService, ViewingService>();
+var app = builder.Build();
+app.UseExceptionHandler(exceptionApp => exceptionApp.Run(async context =>
+{
+    var error = context.Features.Get<Microsoft.AspNetCore.Diagnostics.IExceptionHandlerFeature>()?.Error;
+    var (status, message) = error switch { ValidationException e => (400, e.Message), NotFoundException e => (404, e.Message), BookingConflictException e => (409, e.Message), _ => (500, "An unexpected error occurred.") };
+    context.Response.StatusCode = status; await context.Response.WriteAsJsonAsync(new PropertyViewing.Api.DTOs.ErrorResponse(status, message));
+}));
+if (app.Environment.IsDevelopment()) { app.UseSwagger(); app.UseSwaggerUI(); }
+app.UseHttpsRedirection(); 
+app.MapControllers(); 
+app.Run();
+public partial class Program { }
