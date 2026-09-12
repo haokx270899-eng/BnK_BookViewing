@@ -48,6 +48,24 @@ Successful responses are `201 Created` and include the calculated `endTime`. A t
 
 `GET /api/viewings/available?propertyId=1&from=2026-09-15&to=2026-09-17` returns available `{ startTime, endTime }` slots. Searches are limited to 31 days.
 
+The React client also uses `GET /api/properties` and `GET /api/users` to populate its selectors. They are read-only lookup endpoints returning the seeded IDs and display fields.
+
+## Frontend
+
+The frontend lives in `src/PropertyViewing.Web` and uses React, TypeScript, Vite, and TanStack React Query. It calls the API directly; Vite runs on `http://localhost:5173` and the development API permits that origin with CORS.
+
+Start the API at its configured HTTP address (`http://localhost:54247`), then in another terminal:
+
+```powershell
+cd src/PropertyViewing.Web
+npm install
+npm run dev
+```
+
+The client defaults to `https://localhost:54246`, matching the API launch profile. Set `VITE_API_URL` if the API is running on a different base URL. React Query owns the lookup and availability server state. On every booking result, including a `409 Conflict`, it invalidates availability and lets the API refresh it. The UI never assumes its original slot list remains true.
+
+To demonstrate concurrency, open the frontend in two tabs, select the same property/date/slot but different users, book in the first tab, then book in the second. The second request receives the API's conflict response, displays a clear message, and refreshes the list so the booked slot disappears. The PostgreSQL unique index and API remain the final concurrency authority.
+
 ## Business rules and assumptions
 
 - Slots are exactly 30 minutes, start at `:00` or `:30`, and run from 09:00 through 20:00. Thus 19:30 is valid while 20:00 and 10:15 are rejected.

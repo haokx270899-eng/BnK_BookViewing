@@ -4,10 +4,12 @@ using PropertyViewing.Application.Services;
 using PropertyViewing.Infrastructure;
 
 var builder = WebApplication.CreateBuilder(args);
-builder.Services.AddControllers(); 
-builder.Services.AddEndpointsApiExplorer(); 
+builder.Services.AddControllers();
+builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
-builder.Services.AddInfrastructure(builder.Configuration); 
+builder.Services.AddCors(options => options.AddPolicy("ViteDevelopment", policy =>
+    policy.WithOrigins("http://localhost:5173").AllowAnyHeader().AllowAnyMethod()));
+builder.Services.AddInfrastructure(builder.Configuration);
 builder.Services.AddScoped<IViewingService, ViewingService>();
 var app = builder.Build();
 app.UseExceptionHandler(exceptionApp => exceptionApp.Run(async context =>
@@ -17,7 +19,9 @@ app.UseExceptionHandler(exceptionApp => exceptionApp.Run(async context =>
     context.Response.StatusCode = status; await context.Response.WriteAsJsonAsync(new PropertyViewing.Api.DTOs.ErrorResponse(status, message));
 }));
 if (app.Environment.IsDevelopment()) { app.UseSwagger(); app.UseSwaggerUI(); }
-app.UseHttpsRedirection(); 
-app.MapControllers(); 
+app.UseCors("ViteDevelopment");
+app.UseHttpsRedirection();
+app.MapControllers();
 app.Run();
+
 public partial class Program { }
