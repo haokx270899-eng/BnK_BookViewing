@@ -1,5 +1,10 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <ItemGroup>
+    <Compile Remove="Persistence\Migrations\**" />
+    <EmbeddedResource Remove="Persistence\Migrations\**" />
+    <None Remove="Persistence\Migrations\**" />
+  </ItemGroup>
+  <ItemGroup>
     <ProjectReference Include="..\PropertyViewing.Application\PropertyViewing.Application.csproj" />
   </ItemGroup>
 
@@ -19,6 +24,6 @@
   </ItemGroup>
 
   <ItemGroup>
-    <Folder Include="Persistence\Migrations\" />
+    <Folder Include="Migrations\" />
   </ItemGroup>
 </Project>

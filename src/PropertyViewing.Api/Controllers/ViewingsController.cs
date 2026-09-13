@@ -18,5 +18,6 @@ public sealed class ViewingsController(IViewingService service) : ControllerBase
     }
     [HttpGet("available")]
     [ProducesResponseType(typeof(IReadOnlyList<ViewingSlotDto>), StatusCodes.Status200OK)]
-    public Task<IReadOnlyList<ViewingSlotDto>> Available(int propertyId, DateOnly from, DateOnly to, CancellationToken cancellationToken) => service.GetAvailableAsync(propertyId, from, to, cancellationToken);
+    public Task<IReadOnlyList<ViewingSlotDto>> Available(int propertyId, DateOnly from, DateOnly to, CancellationToken cancellationToken) 
+        => service.GetAvailableAsync(propertyId, from, to, cancellationToken);
 }

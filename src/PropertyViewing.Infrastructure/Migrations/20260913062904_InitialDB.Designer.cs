@@ -12,8 +12,8 @@ using PropertyViewing.Infrastructure.Persistence;
 namespace PropertyViewing.Infrastructure.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    [Migration("20260912072413_InitialCreateDB")]
-    partial class InitialCreateDB
+    [Migration("20260913062904_InitialDB")]
+    partial class InitialDB
     {
         /// <inheritdoc />
         protected override void BuildTargetModel(ModelBuilder modelBuilder)
