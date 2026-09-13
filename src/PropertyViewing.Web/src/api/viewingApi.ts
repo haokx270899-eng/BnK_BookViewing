@@ -1,4 +1,4 @@
-import type { BookingRequest, BookingResult, Property, User, ViewingSlot } from '../types/viewing'
+import type { AdminViewingFilter, AdminViewingItem, BookingRequest, BookingResult, Property, User, ViewingSlot } from '../types/viewing'
 
 // Call HTTPS directly: a cross-origin HTTP-to-HTTPS redirect is rejected by browsers before CORS can succeed.
 const apiBaseUrl = import.meta.env.VITE_API_URL ?? 'https://localhost:54246'
@@ -12,6 +12,15 @@ function getNextDay(dateString: string): string {
   const date = new Date(dateString)
   date.setDate(date.getDate() + 1)
   return date.toISOString().split('T')[0]
+}
+
+function toQueryString(filters: AdminViewingFilter): string {
+  const parameters = new URLSearchParams()
+  if (filters.propertyId != null) parameters.set('propertyId', String(filters.propertyId))
+  if (filters.date) parameters.set('date', filters.date)
+  if (filters.userId != null) parameters.set('userId', String(filters.userId))
+  const query = parameters.toString()
+  return query ? `?${query}` : ''
 }
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
@@ -53,4 +62,6 @@ export const viewingApi = {
       headers: { 'Content-Type': 'application/json' }, 
       body: JSON.stringify(booking) 
     }),
+  getAdminViewings: (filters: AdminViewingFilter = {}) =>
+    request<AdminViewingItem[]>(`/api/admin/viewings${toQueryString(filters)}`),
 }

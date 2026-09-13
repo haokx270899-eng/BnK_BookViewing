@@ -62,7 +62,7 @@ export function BookingPage() {
             error instanceof ApiError && error.status === 409
               ? "This slot has just been booked by another user. Please select another slot."
               : error instanceof ApiError &&
-                (error.status === 400 || error.status === 404)
+                  (error.status === 400 || error.status === 404)
                 ? error.message
                 : "Unable to complete the booking. Please try again.",
           ),
@@ -98,7 +98,8 @@ export function BookingPage() {
         {/* Thêm thông tin TimeZone của Property đang chọn */}
         {selectedProperty && (
           <p className="hint">
-            📍 Property Time Zone: <strong>{selectedProperty.timeZoneId}</strong>
+            📍 Property Time Zone:{" "}
+            <strong>{selectedProperty.timeZoneId}</strong>
           </p>
         )}
 

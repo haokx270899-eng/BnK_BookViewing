@@ -23,7 +23,15 @@ app.UseExceptionHandler(exceptionApp => exceptionApp.Run(async context =>
     };
     context.Response.StatusCode = status; await context.Response.WriteAsJsonAsync(new PropertyViewing.Api.DTOs.ErrorResponse(status, message));
 }));
-if (app.Environment.IsDevelopment()) { app.UseSwagger(); app.UseSwaggerUI(); }
+if (app.Environment.IsDevelopment())
+{
+    app.UseSwagger();
+    app.UseSwaggerUI(c =>
+    {
+        c.SwaggerEndpoint("/swagger/v1/swagger.json", "Property Viewing API v1");
+        c.RoutePrefix = string.Empty;
+    });
+}
 app.UseCors("ViteDevelopment");
 app.UseHttpsRedirection();
 app.MapControllers();

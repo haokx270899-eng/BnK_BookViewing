@@ -25,3 +25,22 @@ export type BookingResult = BookingRequest & {
   id: number; 
   endTime: string; 
 };
+
+export type AdminViewingItem = {
+  id: number;
+  propertyId: number;
+  propertyAddress: string;
+  propertyTimeZoneId: string;
+  userId: number;
+  userName: string;
+  userEmail: string | null;
+  startTimeUtc: string;
+  endTimeUtc: string;
+  createdAt: string;
+};
+
+export type AdminViewingFilter = {
+  propertyId?: number | null;
+  date?: string | null;
+  userId?: number | null;
+};

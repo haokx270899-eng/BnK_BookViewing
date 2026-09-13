@@ -1,2 +1,6 @@
 import { BookingPage } from './pages/BookingPage'
-export default function App() { return <BookingPage /> }
+import { AdminViewingsPage } from './pages/AdminViewingsPage'
+
+export default function App() {
+  return window.location.pathname === '/admin/viewings' ? <AdminViewingsPage /> : <BookingPage />
+}
