@@ -1,4 +1,3 @@
-using Microsoft.Extensions.Logging.Abstractions;
 using PropertyViewing.Application.Exceptions;
 using PropertyViewing.Application.Interfaces;
 using PropertyViewing.Application.Services;
@@ -9,7 +8,7 @@ namespace PropertyViewing.UnitTests;
 
 public sealed class ViewingServiceTests
 {
-    private const string DefaultTimeZone = "Europe/London"; // BST (UTC+1) vào tháng 9
+    private const string DefaultTimeZone = "Europe/London"; // BST (UTC+1) in September
 
     [Fact]
     public async Task BookAsync_ValidAlignedSlot_CreatesViewing()
@@ -17,11 +16,12 @@ public sealed class ViewingServiceTests
         var repository = new FakeRepository();
         var service = CreateService(repository);
 
-        // 10:30 Local London (BST = UTC+1) -> 09:30 UTC
-        var startUtc = AtUtc(9, 30);
-        var result = await service.BookAsync(new(1, 1, startUtc), default);
+        // 10:30 Local London (BST = UTC+1) -> Converted to 09:30 UTC
+        var localStart = new DateTime(2026, 9, 15, 10, 30, 0, DateTimeKind.Unspecified);
+        var result = await service.BookAsync(new(1, 1, localStart), default);
 
-        Assert.Equal(AtUtc(10, 0), result.EndTime); // EndTime = 10:00 UTC (11:00 Local)
+        // EndTime in UTC should be 10:00 UTC (Corresponding to 11:00 Local London)
+        Assert.Equal(AtUtc(10, 0), result.EndTime);
         Assert.Single(repository.Viewings);
     }
 
@@ -31,34 +31,47 @@ public sealed class ViewingServiceTests
         var repository = new FakeRepository();
         var service = CreateService(repository);
 
-        // Khách ở VN (UTC+7) muốn xem nhà ở London (UTC+1) lúc 16:30 giờ VN (tức 10:30 giờ London)
-        // 16:30 VN (UTC+7) = 09:30 UTC
-        var requestUtc = AtUtc(9, 30);
+        // Viewer books a slot at 10:30 Local London time
+        var localStart = new DateTime(2026, 9, 15, 10, 30, 0, DateTimeKind.Unspecified);
 
-        var result = await service.BookAsync(new(1, 1, requestUtc), default);
+        var result = await service.BookAsync(new(1, 1, localStart), default);
 
         Assert.NotNull(result);
-        Assert.Equal(requestUtc, result.StartTime);
+        // 10:30 Local London (BST UTC+1) correctly converts to 09:30 UTC
+        Assert.Equal(AtUtc(9, 30), result.StartTime);
     }
 
     [Fact]
     public async Task BookAsync_AlreadyBookedSlot_ThrowsConflict()
     {
         var repository = new FakeRepository();
-        var startUtc = AtUtc(9, 30); // 10:30 Local London
-        await repository.CreateAsync(NewViewing(1, startUtc), default);
+        var service = CreateService(repository);
 
+        // 1. Create a pre-booked slot in DB (Stored in UTC)
+        // 09:30 UTC equals 10:30 Local London (BST = UTC+1)
+        var existingStartUtc = AtUtc(9, 30);
+        await repository.CreateAsync(NewViewing(1, existingStartUtc), default);
+
+        // 2. New request attempts to book the same slot at 10:30 Local London
+        // Service converts 10:30 Local -> 09:30 UTC (matches existing slot above)
+        var localStart = new DateTime(2026, 9, 15, 10, 30, 0, DateTimeKind.Unspecified);
+
+        // 3. Execute and verify exception
         await Assert.ThrowsAsync<BookingConflictException>(() =>
-            CreateService(repository).BookAsync(new(1, 2, startUtc), default));
+            service.BookAsync(new(1, 2, localStart), default));
     }
 
     [Theory]
-    [InlineData(7, 30)]  // 07:30 UTC = 08:30 Local London (Sớm hơn 09:00 Local) -> Reject
-    [InlineData(19, 0)]  // 19:00 UTC = 20:00 Local London (Hết giờ làm việc 20:00 Local) -> Reject
-    [InlineData(9, 15)]  // 09:15 UTC = 10:15 Local London (Lẻ 15 phút, không đúng mốc 30 phút) -> Reject
-    public async Task BookAsync_InvalidHoursOrAlignment_IsRejected(int utcHour, int minute) =>
+    [InlineData(8, 30)]  // 08:30 Local London (Earlier than 09:00 Local) -> Reject
+    [InlineData(20, 0)]  // 20:00 Local London (Closed) -> Reject
+    [InlineData(10, 15)] // 10:15 Local London (15-min unaligned slot) -> Reject
+    public async Task BookAsync_InvalidHoursOrAlignment_IsRejected(int localHour, int minute)
+    {
+        var localStart = new DateTime(2026, 9, 15, localHour, minute, 0, DateTimeKind.Unspecified);
+
         await Assert.ThrowsAsync<ValidationException>(() =>
-            CreateService(new FakeRepository()).BookAsync(new(1, 1, AtUtc(utcHour, minute)), default));
+            CreateService(new FakeRepository()).BookAsync(new(1, 1, localStart), default));
+    }
 
     [Fact]
     public async Task BookAsync_NonExistentProperty_IsNotFound()
@@ -96,14 +109,14 @@ public sealed class ViewingServiceTests
         repository.Properties[1] = "Europe/London";
         var service = CreateService(repository);
 
-        // Ngày 25/10/2026 tại London là ngày Fall Back (vặn lùi giờ 02:00 -> 01:00 AM)
-        // Đặt lịch lúc 09:30 Local Time vào ngày này
+        // October 25, 2026 in London is Fall Back day (clocks turn back 02:00 -> 01:00 AM)
+        // Book a slot at 09:30 Local Time on this day
         var localTimeOnDstFallback = new DateTime(2026, 10, 25, 9, 30, 0, DateTimeKind.Unspecified);
 
         var result = await service.BookAsync(new(1, 1, localTimeOnDstFallback), default);
 
         Assert.NotNull(result);
-        // Kiểm tra UTC được quy đổi chính xác theo chuẩn Greenwich Mean Time (GMT = UTC+0 vào mùa đông)
+        // Verify UTC is accurately converted per Greenwich Mean Time standard (GMT = UTC+0 in winter)
         Assert.Equal(new DateTime(2026, 10, 25, 9, 30, 0, DateTimeKind.Utc), result.StartTime);
     }
 
@@ -112,17 +125,17 @@ public sealed class ViewingServiceTests
     {
         var repository = new FakeRepository();
 
-        // Slot đã book: 09:30 UTC - 10:00 UTC (Tương ứng 10:30 - 11:00 Local London)
+        // Booked slot: 09:30 UTC - 10:00 UTC (Corresponding to 10:30 - 11:00 Local London)
         var bookedStartUtc = AtUtc(9, 30);
         await repository.CreateAsync(NewViewing(1, bookedStartUtc), default);
 
         var date = DateOnly.FromDateTime(AtUtc(0, 0));
         var slots = await CreateService(repository).GetAvailableAsync(1, date, date, default);
 
-        // Khớp chính xác thuộc tính SlotStartUtc trong DTO
+        // Accurately matches UtcStartTime property in DTO
         Assert.DoesNotContain(slots, x => x.UtcStartTime == bookedStartUtc);
 
-        // Slot 08:00 UTC (tương ứng 09:00 Local London) phải còn trống
+        // Slot 08:00 UTC (corresponding to 09:00 Local London) must remain available
         Assert.Contains(slots, x => x.UtcStartTime == AtUtc(8, 0));
     }
 
@@ -134,7 +147,7 @@ public sealed class ViewingServiceTests
 
         var slots = await service.GetAvailableAsync(1, date, date.AddDays(1), default);
 
-        // 22 slots mỗi ngày làm việc (09:00 - 20:00) * 2 ngày = 44 slots
+        // 22 slots per business day (09:00 - 20:00) * 2 days = 44 slots
         Assert.Equal(44, slots.Count);
     }
 
@@ -145,12 +158,12 @@ public sealed class ViewingServiceTests
         repository.Properties[1] = "America/New_York";
         var service = CreateService(repository);
 
-        // Ngày 08/03/2026 là ngày Spring Forward tại New York (02:00 AM nhảy lên 03:00 AM)
+        // March 8, 2026 is Spring Forward day in New York (02:00 AM jumps to 03:00 AM)
         var dstDate = new DateOnly(2026, 3, 8);
 
         var slots = await service.GetAvailableAsync(1, dstDate, dstDate, default);
 
-        // Đảm bảo tất cả các slot sinh ra đều là thời gian Local hợp lệ (không chứa bất kỳ invalid time nào)
+        // Ensure all generated slots are valid Local times (contain no invalid times)
         var tz = TimeZoneInfo.FindSystemTimeZoneById("America/New_York");
         Assert.All(slots, slot => Assert.False(tz.IsInvalidTime(slot.LocalStartTime)));
     }
@@ -170,7 +183,6 @@ public sealed class ViewingServiceTests
         CreatedAt = DateTime.UtcNow
     };
 }
-
 public sealed class FakeRepository : IViewingRepository
 {
     public Dictionary<int, string> Properties { get; set; } = new()
