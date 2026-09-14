@@ -102,6 +102,9 @@ public sealed class ViewingServiceTests
             CreateService(repository).BookAsync(new(1, 1, AtUtc(9, 30)), default));
     }
 
+
+
+    //--------------------------------------------------------------------------------------------------------
     [Fact]
     public async Task BookAsync_DuringFallBackDST_HandlesAmbiguousLocalTimeSafely()
     {
@@ -119,6 +122,7 @@ public sealed class ViewingServiceTests
         // Verify UTC is accurately converted per Greenwich Mean Time standard (GMT = UTC+0 in winter)
         Assert.Equal(new DateTime(2026, 10, 25, 9, 30, 0, DateTimeKind.Utc), result.StartTime);
     }
+    //--------------------------------------------------------------------------------------------------------
 
     [Fact]
     public async Task AvailableAsync_ExcludesBookedSlot()
@@ -151,6 +155,7 @@ public sealed class ViewingServiceTests
         Assert.Equal(44, slots.Count);
     }
 
+    //--------------------------------------------------------------------------------------------------------
     [Fact]
     public async Task GetAvailableAsync_DuringSpringForwardDST_SkipsInvalidLocalSlots()
     {
@@ -164,6 +169,7 @@ public sealed class ViewingServiceTests
         var slots = await service.GetAvailableAsync(1, dstDate, dstDate, default);
 
         // Ensure all generated slots are valid Local times (contain no invalid times)
+        //Assert.False(tz.IsInvalidTime(slot.LocalStartTime)) --> False for every slot
         var tz = TimeZoneInfo.FindSystemTimeZoneById("America/New_York");
         Assert.All(slots, slot => Assert.False(tz.IsInvalidTime(slot.LocalStartTime)));
     }
