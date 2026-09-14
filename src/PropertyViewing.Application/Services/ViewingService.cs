@@ -1,3 +1,5 @@
+using Microsoft.EntityFrameworkCore;
+using Npgsql;
 using PropertyViewing.Application.DTOs;
 using PropertyViewing.Application.Exceptions;
 using PropertyViewing.Application.Interfaces;
@@ -15,7 +17,9 @@ public sealed class ViewingService(
         BookViewingCommand command,
         CancellationToken cancellationToken)
     {
-        ValidateIdentifiers(command.PropertyId, command.UserId);
+        try
+        {
+            ValidateIdentifiers(command.PropertyId, command.UserId);
 
         var timeZoneId = await repository.GetPropertyTimeZoneAsync(
             command.PropertyId, cancellationToken);
@@ -70,6 +74,13 @@ public sealed class ViewingService(
             viewing.UserId,
             viewing.StartTime,
             viewing.EndTime);
+        }
+        catch (DbUpdateException ex) when (ex.InnerException is PostgresException { SqlState: "23505" })
+        {
+            // Catch PostgreSQL Unique Constraint Violation (SQLState 23505) triggered by the unique index 
+            // on (PropertyId, StartTime) to handle race conditions gracefully and translate to a 409 Conflict.
+            throw new BookingConflictException("The viewing slot has just been booked by another user.");
+        }
     }
 
     public async Task<IReadOnlyList<ViewingSlotDto>> GetAvailableAsync(

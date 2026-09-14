@@ -1,93 +1,167 @@
-# Property Viewing Slots
+# Property Viewing Management
 
-## Overview
+## Overview & Executive Summary
 
-A deliberately small .NET 8 Web API for booking and finding available 30-minute property-viewing slots. It uses a service layer for business rules, EF Core Code First for persistence, and PostgreSQL as the database.
+Property Viewing Management is a multi-timezone property-viewing booking system built with **.NET 8**, ASP.NET Core Web API, Entity Framework Core, and PostgreSQL. A small React/Vite client is included for booking and availability workflows.
 
-## Technology stack and architecture
+The system applies property-local business rules consistently across time zones:
 
-- .NET 8 / ASP.NET Core Web API
-- EF Core with the Npgsql PostgreSQL provider (Code First)
-- Swagger/OpenAPI
-- xUnit
+- Viewings are fixed **30-minute** intervals.
+- Valid starts are on `:00` or `:30` between **09:00 (inclusive)** and **20:00 (exclusive)** in the property's local time zone.
+- Availability is isolated per property; an overlapping viewing makes that property interval unavailable.
+- Availability searches are limited to 31 days.
 
-Request flow: **Controller → ViewingService → IViewingRepository → EF Core → PostgreSQL**. Controllers stay HTTP-focused; the service is independently unit-testable and owns slot rules. The repository is intentionally small because it encapsulates the couple of database queries and the concurrency-specific persistence behavior.
+The API keeps HTTP concerns in controllers, business rules in the application service, and EF Core/PostgreSQL access in infrastructure. This separation keeps scheduling logic independently unit-testable and preserves a clear path for production hardening.
 
-## Database setup and running
+## Architecture & Technical Design Decisions
 
-Install PostgreSQL, create a database user if needed, and set the connection string. Never commit real credentials; the checked-in value is a placeholder. An environment variable overrides it:
+### Layered design
+
+```text
+HTTP request
+    │
+    ▼
+API Controllers ──► Application / ViewingService ──► Repository interface
+                                                        │
+                                                        ▼
+                                              EF Core / PostgreSQL
+```
+
+- **Domain** contains the `Property`, `User`, and `Viewing` entities.
+- **Application** owns validation, slot generation, timezone conversion, and business exceptions behind interfaces.
+- **Infrastructure** implements persistence, entity configuration, migrations, and database-level conflict translation.
+- **API** exposes controller endpoints, dependency composition, exception-to-HTTP mapping, Swagger, and development CORS.
+
+### Timezone and DST awareness
+
+Properties store an IANA timezone ID (for example, `Europe/London`, `America/New_York`, or `Asia/Ho_Chi_Minh`). Booking input is deliberately treated as a **local wall-clock value**: `ViewingService` applies `DateTime.SpecifyKind(..., DateTimeKind.Unspecified)` before validating business hours and alignment. This prevents the caller or host machine's local timezone from silently changing the intended property-local time.
+
+After local validation, `ConvertToUtcSafe` converts slot boundaries to UTC. Bookings are persisted as PostgreSQL `timestamp with time zone` values, and conflict/availability queries operate strictly on UTC timestamps. The availability DTO returns both local and UTC boundaries:
+
+```json
+{
+  "localStartTime": "2026-09-15T10:30:00",
+  "localEndTime": "2026-09-15T11:00:00",
+  "utcStartTime": "2026-09-15T09:30:00Z",
+  "utcEndTime": "2026-09-15T10:00:00Z"
+}
+```
+
+### DST edge cases
+
+`ConvertToUtcSafe` and availability generation explicitly account for daylight-saving transitions:
+
+- **Spring Forward:** `TimeZoneInfo.IsInvalidTime` identifies non-existent local wall-clock values. The availability generator skips those slots. For conversion, the active timezone adjustment rule is resolved for the target date and its dynamic `DaylightDelta` is applied (with a one-hour fallback) before conversion.
+- **Fall Back:** repeated local hours can map to different UTC instants. Returning paired Local/UTC fields allows API consumers to distinguish the otherwise identical local times. UTC persistence also makes collision detection deterministic.
+
+### Database query range expansion
+
+`GetAvailableAsync` expands a requested date range to complete **local-day** boundaries—`00:00` on `from` through `00:00` on `to + 1`—before converting those bounds to UTC. This is important because a local calendar day is not always 24 hours at timezone/DST boundaries. Querying with the expanded UTC range prevents bookings near a shift from being omitted before local availability is calculated.
+
+### Conflict checking and performance
+
+The service materializes booked UTC intervals into a `HashSet<(StartTime, EndTime)>`, giving O(1) expected lookup for an exact candidate interval and avoiding repeated database calls while slots are generated. It uses the standard interval predicate `booked.Start < candidate.End && booked.End > candidate.Start` for overlap semantics. Because the current overlap predicate enumerates the set, its general interval-overlap check remains O(n); for the fixed 30-minute grid, it can be reduced to O(1) by testing `HashSet.Contains((slotStartUtc, slotEndUtc))` once interval flexibility is no longer required.
+
+The repository also checks conflicts in the database and PostgreSQL enforces a unique `(PropertyId, StartTime)` index. The unique-violation path is translated to a domain booking-conflict error and surfaced as HTTP `409 Conflict`.
+
+## Project Structure
+
+```text
+.
+├── PropertyViewing.sln
+├── Directory.Build.props                 # net8.0, nullable, warnings as errors
+├── src
+│   ├── PropertyViewing.Domain
+│   │   └── Entities
+│   │       ├── Property.cs
+│   │       ├── User.cs
+│   │       └── Viewing.cs
+│   ├── PropertyViewing.Application
+│   │   ├── DTOs/ViewingDtos.cs
+│   │   ├── Exceptions/DomainExceptions.cs
+│   │   ├── Interfaces
+│   │   │   ├── IViewingRepository.cs
+│   │   │   └── IViewingService.cs
+│   │   └── Services/ViewingService.cs
+│   ├── PropertyViewing.Infrastructure
+│   │   ├── Migrations
+│   │   ├── Persistence
+│   │   │   ├── AppDbContext.cs
+│   │   │   └── Configurations/EntityConfigurations.cs
+│   │   └── Repositories/ViewingRepository.cs
+│   ├── PropertyViewing.Api
+│   │   ├── Controllers
+│   │   │   ├── ViewingsController.cs
+│   │   │   ├── AdminViewingsController.cs
+│   │   │   └── LookupsController.cs
+│   │   ├── DTOs
+│   │   ├── appsettings.json
+│   │   └── Program.cs
+│   └── PropertyViewing.Web                # React + TypeScript + Vite client
+│       └── src
+│           ├── api
+│           ├── components
+│           ├── hooks
+│           └── pages
+└── tests
+    └── PropertyViewing.UnitTests
+        └── ViewingServiceTests.cs
+```
+
+## Prerequisites and Local Development
+
+Required:
+
+- [.NET 8 SDK](https://dotnet.microsoft.com/download/dotnet/8.0)
+- PostgreSQL (for API/database execution)
+- Node.js 20+ and npm (optional, for the web client)
+
+Build and run the unit tests from the repository root:
+
+```powershell
+dotnet restore
+dotnet build
+dotnet test
+```
+
+To run the API, configure `ConnectionStrings__DefaultConnection` with local PostgreSQL credentials, apply the included migrations, and start the API:
 
 ```powershell
 $env:ConnectionStrings__DefaultConnection = "Host=localhost;Port=5432;Database=property_viewing;Username=postgres;Password=your-password"
-dotnet restore
 dotnet ef database update --project src/PropertyViewing.Infrastructure --startup-project src/PropertyViewing.Api
 dotnet run --project src/PropertyViewing.Api
 ```
 
-If EF CLI is missing: `dotnet tool install --global dotnet-ef --version 8.*`. The included initial migration creates the tables and seeds three properties and three users. Swagger is available at the URL printed by `dotnet run`, under `/swagger` in Development.
-
-Run the tests with:
+In Development, Swagger UI is served at the API root. To start the web client in a separate shell:
 
 ```powershell
-dotnet test
-```
-
-## API examples
-
-`POST /api/viewings`
-
-```json
-{ "propertyId": 1, "userId": 1, "startTime": "2026-09-15T10:30:00" }
-```
-
-Successful responses are `201 Created` and include the calculated `endTime`. A taken slot is `409`:
-
-```json
-{ "status": 409, "message": "The viewing slot is already booked." }
-```
-
-`GET /api/viewings/available?propertyId=1&from=2026-09-15&to=2026-09-17` returns available `{ startTime, endTime }` slots. Searches are limited to 31 days.
-
-The React client also uses `GET /api/properties` and `GET /api/users` to populate its selectors. They are read-only lookup endpoints returning the seeded IDs and display fields.
-
-## Frontend
-
-The frontend lives in `src/PropertyViewing.Web` and uses React, TypeScript, Vite, and TanStack React Query. It calls the API directly; Vite runs on `http://localhost:5173` and the development API permits that origin with CORS.
-
-Start the API at its configured HTTP address (`http://localhost:54247`), then in another terminal:
-
-```powershell
-cd src/PropertyViewing.Web
+Set-Location src/PropertyViewing.Web
 npm install
 npm run dev
 ```
 
-The client defaults to `https://localhost:54246`, matching the API launch profile. Set `VITE_API_URL` if the API is running on a different base URL. React Query owns the lookup and availability server state. On every booking result, including a `409 Conflict`, it invalidates availability and lets the API refresh it. The UI never assumes its original slot list remains true.
+The Vite development server uses `http://localhost:5173`; configure `VITE_API_URL` if the API uses a different address.
 
-To demonstrate concurrency, open the frontend in two tabs, select the same property/date/slot but different users, book in the first tab, then book in the second. The second request receives the API's conflict response, displays a clear message, and refreshes the list so the booked slot disappears. The PostgreSQL unique index and API remain the final concurrency authority.
+## API Surface
 
-## Business rules and assumptions
+| Endpoint | Purpose |
+| --- | --- |
+| `POST /api/viewings` | Creates a property-local, 30-minute viewing request. |
+| `GET /api/viewings/available?propertyId={id}&from={date}&to={date}` | Returns available slots with local and UTC boundaries. |
+| `GET /api/properties` | Returns property lookup data, including timezone context. |
+| `GET /api/users` | Returns user lookup data. |
+| `GET /api/admin/viewings` | Returns administrative viewing data. |
 
-- Slots are exactly 30 minutes, start at `:00` or `:30`, and run from 09:00 through 20:00. Thus 19:30 is valid while 20:00 and 10:15 are rejected.
-- A property's overlapping slot is unavailable; bookings on a different property are independent.
-- Property and user must exist. Invalid rules return 400, missing records return 404, and booking collisions return 409.
-- Weekends are treated like weekdays. A user may book different properties at the same time because the challenge only prohibits property conflicts; this would be clarified with the product owner.
-- Viewing times are wall-clock local business times stored as PostgreSQL `timestamp without time zone`; `CreatedAt` is UTC. A production version should establish a property time zone and return offset-aware values.
+Invalid business input returns `400`, unknown properties/users return `404`, and collisions return `409`.
 
-## Concurrency
+## AI Collaboration & Disclosure
 
-The service checks for conflict to produce a friendly result, but that check alone cannot prevent two simultaneous requests. PostgreSQL has a unique `(PropertyId, StartTime)` index as the final guard; the repository translates its unique-violation error to a 409 response. This is safe across multiple API instances for fixed aligned slots. More flexible intervals would benefit from a PostgreSQL exclusion constraint and a transaction.
+AI tools were used as a development aid for code refactoring, review of DST edge cases, and generation of documentation and test material. The resulting implementation and this document should be reviewed as normal engineering artifacts; timezone behavior, data contracts, and production policies remain explicit human-owned decisions.
 
-## Testing
+## Production Considerations & Next Steps
 
-The xUnit tests cover successful aligned bookings, conflicts, out-of-hours and misaligned input, missing property/user behavior, booked-slot filtering, and multi-day searches. They exercise business behavior with a small in-memory fake rather than EF internals. A useful next integration test would run migrations and concurrent API calls against PostgreSQL.
-
-## Security, performance, and next steps
-
-Production should add OAuth2/OIDC authentication, authorization, HTTPS enforcement, rate limits, secrets management, and derive `UserId` from claims rather than the body. Database filtering and indexes keep normal searches bounded; for higher scale, add monitoring/tracing, query analysis, stricter range policies/pagination, caching only after measurement, and horizontal API scaling.
-
-With more time: clarify time zones and user-conflict policy, strengthen interval concurrency, add PostgreSQL integration tests and health checks, improve observability, and refine production migration/deployment strategy.
-
-## AI usage
-
-AI tools were used to clarify requirements, identify edge cases, review the architecture, and assist development. The implementation decisions were reviewed and are intended to be explainable in a technical interview.
+- **Concurrency control:** the unique index protects fixed aligned starts, but high-contention or variable-duration booking flows should use a transaction with pessimistic locking, an appropriate PostgreSQL exclusion constraint, or a distributed lock to prevent double-booking across API instances.
+- **Caching:** cache bounded availability responses in Redis, keyed by property, local date range, and timezone; invalidate or version entries whenever a booking changes the property's schedule.
+- **Observability:** add structured logging with correlation IDs, metrics for search/booking latency and conflicts, distributed tracing, health checks, and alerting for database/timezone conversion failures.
+- **Security and operations:** introduce OIDC/OAuth2 authentication, derive user identity from claims rather than request bodies, use secret storage, enforce production CORS/HTTPS policy, and add rate limits.
+- **Verification:** add PostgreSQL integration tests for concurrent requests and DST transitions, especially invalid times and repeated local hours in DST-observing property zones.

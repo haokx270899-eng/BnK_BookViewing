@@ -9,7 +9,7 @@ namespace PropertyViewing.UnitTests;
 
 public sealed class ViewingServiceTests
 {
-    private const string DefaultTimeZone = "Europe/London"; // UTC+1 vào tháng 9 (BST)
+    private const string DefaultTimeZone = "Europe/London"; // BST (UTC+1) vào tháng 9
 
     [Fact]
     public async Task BookAsync_ValidAlignedSlot_CreatesViewing()
@@ -90,6 +90,24 @@ public sealed class ViewingServiceTests
     }
 
     [Fact]
+    public async Task BookAsync_DuringFallBackDST_HandlesAmbiguousLocalTimeSafely()
+    {
+        var repository = new FakeRepository();
+        repository.Properties[1] = "Europe/London";
+        var service = CreateService(repository);
+
+        // Ngày 25/10/2026 tại London là ngày Fall Back (vặn lùi giờ 02:00 -> 01:00 AM)
+        // Đặt lịch lúc 09:30 Local Time vào ngày này
+        var localTimeOnDstFallback = new DateTime(2026, 10, 25, 9, 30, 0, DateTimeKind.Unspecified);
+
+        var result = await service.BookAsync(new(1, 1, localTimeOnDstFallback), default);
+
+        Assert.NotNull(result);
+        // Kiểm tra UTC được quy đổi chính xác theo chuẩn Greenwich Mean Time (GMT = UTC+0 vào mùa đông)
+        Assert.Equal(new DateTime(2026, 10, 25, 9, 30, 0, DateTimeKind.Utc), result.StartTime);
+    }
+
+    [Fact]
     public async Task AvailableAsync_ExcludesBookedSlot()
     {
         var repository = new FakeRepository();
@@ -101,11 +119,11 @@ public sealed class ViewingServiceTests
         var date = DateOnly.FromDateTime(AtUtc(0, 0));
         var slots = await CreateService(repository).GetAvailableAsync(1, date, date, default);
 
-        // Đảm bảo không chứa slot 09:30 UTC đã book
-        Assert.DoesNotContain(slots, x => x.StartTime == bookedStartUtc);
+        // Khớp chính xác thuộc tính SlotStartUtc trong DTO
+        Assert.DoesNotContain(slots, x => x.UtcStartTime == bookedStartUtc);
 
         // Slot 08:00 UTC (tương ứng 09:00 Local London) phải còn trống
-        Assert.Contains(slots, x => x.StartTime == AtUtc(8, 0));
+        Assert.Contains(slots, x => x.UtcStartTime == AtUtc(8, 0));
     }
 
     [Fact]
@@ -116,9 +134,25 @@ public sealed class ViewingServiceTests
 
         var slots = await service.GetAvailableAsync(1, date, date.AddDays(1), default);
 
-        // Mỗi ngày làm việc từ 09:00 - 20:00 Local có 22 slots (mỗi slot 30 phút)
-        // 2 ngày = 44 slots UTC
+        // 22 slots mỗi ngày làm việc (09:00 - 20:00) * 2 ngày = 44 slots
         Assert.Equal(44, slots.Count);
+    }
+
+    [Fact]
+    public async Task GetAvailableAsync_DuringSpringForwardDST_SkipsInvalidLocalSlots()
+    {
+        var repository = new FakeRepository();
+        repository.Properties[1] = "America/New_York";
+        var service = CreateService(repository);
+
+        // Ngày 08/03/2026 là ngày Spring Forward tại New York (02:00 AM nhảy lên 03:00 AM)
+        var dstDate = new DateOnly(2026, 3, 8);
+
+        var slots = await service.GetAvailableAsync(1, dstDate, dstDate, default);
+
+        // Đảm bảo tất cả các slot sinh ra đều là thời gian Local hợp lệ (không chứa bất kỳ invalid time nào)
+        var tz = TimeZoneInfo.FindSystemTimeZoneById("America/New_York");
+        Assert.All(slots, slot => Assert.False(tz.IsInvalidTime(slot.LocalStartTime)));
     }
 
     private static ViewingService CreateService(FakeRepository repository) =>
