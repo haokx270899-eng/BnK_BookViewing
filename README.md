@@ -127,7 +127,7 @@ dotnet test
 To run the API, configure `ConnectionStrings__DefaultConnection` with local PostgreSQL credentials, apply the included migrations, and start the API:
 
 ```powershell
-$env:ConnectionStrings__DefaultConnection = "Host=localhost;Port=5432;Database=property_viewing;Username=postgres;Password=your-password"
+$env:ConnectionStrings__DefaultConnection = "Host=localhost;Port=5432;Database=property_viewing;Username=postgres;Password=12345678"
 dotnet ef database update --project src/PropertyViewing.Infrastructure --startup-project src/PropertyViewing.Api
 dotnet run --project src/PropertyViewing.Api
 ```

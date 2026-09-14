@@ -1,7 +1,7 @@
 export type Property = { 
   id: number; 
   address: string; 
-  timeZoneId: string; // Bổ sung trường này từ Backend
+  timeZoneId: string; 
 };
 
 export type User = { 
@@ -11,19 +11,24 @@ export type User = {
 };
 
 export type ViewingSlot = { 
-  startTime: string; // Chuỗi ISO UTC: "2026-09-15T09:30:00Z"
-  endTime: string; 
+  localStartTime: string; // "2026-09-14T09:00:00" (Local time tại Property)
+  localEndTime: string;   // "2026-09-14T09:30:00"
+  utcStartTime: string;   // "2026-09-14T08:00:00Z" (ISO UTC string)
+  utcEndTime: string;     // "2026-09-14T08:30:00Z"
 };
 
 export type BookingRequest = { 
   propertyId: number; 
   userId: number; 
-  startTime: string; 
+  startTime: string; // Gửi chuỗi localStartTime (DateTimeKind.Unspecified) để Backend tự convert theo timezone của Property
 };
 
-export type BookingResult = BookingRequest & { 
-  id: number; 
-  endTime: string; 
+export type BookingResult = {
+  id: number;
+  propertyId: number;
+  userId: number;
+  startTime: string; // ISO UTC string trả về từ Backend
+  endTime: string;   // ISO UTC string trả về từ Backend
 };
 
 export type AdminViewingItem = {

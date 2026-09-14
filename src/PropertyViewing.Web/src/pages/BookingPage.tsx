@@ -12,7 +12,6 @@ import {
 } from "../hooks/useViewings";
 import type { ViewingSlot } from "../types/viewing";
 
-// Lấy ngày YYYY-MM-DD theo giờ địa phương hiện tại
 const getTodayString = () => {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
@@ -30,7 +29,6 @@ export function BookingPage() {
   const slots = useAvailableSlots(propertyId, date);
   const booking = useBookViewing();
 
-  // Tìm thông tin Property đang chọn để lấy TimeZoneId
   const selectedProperty = properties.data?.find((p) => p.id === propertyId);
 
   useEffect(() => {
@@ -38,10 +36,11 @@ export function BookingPage() {
     setMessage(null);
   }, [propertyId, date]);
 
+  // Cập nhật so sánh theo utcStartTime
   useEffect(() => {
     if (
       selectedSlot &&
-      !slots.data?.some((slot) => slot.startTime === selectedSlot.startTime)
+      !slots.data?.some((slot) => slot.utcStartTime === selectedSlot.utcStartTime)
     ) {
       setSelectedSlot(null);
     }
@@ -50,8 +49,10 @@ export function BookingPage() {
   const handleBook = () => {
     if (!propertyId || !userId || !selectedSlot) return;
     setMessage(null);
+
+    // Gửi localStartTime sang Backend để quy đổi đúng theo múi giờ của Property
     booking.mutate(
-      { propertyId, userId, startTime: selectedSlot.startTime },
+      { propertyId, userId, startTime: selectedSlot.localStartTime },
       {
         onSuccess: () => {
           setMessage("Viewing booked successfully.");
@@ -95,7 +96,6 @@ export function BookingPage() {
           <DateSelector value={date} onChange={setDate} />
         </div>
 
-        {/* Thêm thông tin TimeZone của Property đang chọn */}
         {selectedProperty && (
           <p className="hint">
             📍 Property Time Zone:{" "}
@@ -122,16 +122,15 @@ export function BookingPage() {
           {slots.data && slots.data.length > 0 && (
             <AvailableSlots
               slots={slots.data}
-              selectedStart={selectedSlot?.startTime ?? null}
+              selectedStart={selectedSlot?.localStartTime ?? null}
               onSelect={setSelectedSlot}
-              timeZoneId={selectedProperty?.timeZoneId} // Truyền timezone vào
             />
           )}
           {selectedSlot && (
             <p className="selected-slot">
               Selected slot:{" "}
               <strong>
-                {slotLabel(selectedSlot, selectedProperty?.timeZoneId)}
+                {slotLabel(selectedSlot)}
               </strong>
             </p>
           )}
