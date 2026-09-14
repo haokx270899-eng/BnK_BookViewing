@@ -1,4 +1,3 @@
-using Microsoft.Extensions.Logging;
 using PropertyViewing.Application.DTOs;
 using PropertyViewing.Application.Exceptions;
 using PropertyViewing.Application.Interfaces;
@@ -31,29 +30,29 @@ public sealed class ViewingService(
             throw new NotFoundException("User was not found.");
         }
 
-        // 1. Safe parsing TimeZone
-        if (!TimeZoneInfo.TryFindSystemTimeZoneById(timeZoneId, out var timeZone))
+        if (!TimeZoneInfo.TryFindSystemTimeZoneById(timeZoneId, out var propertyTimeZone))
         {
             throw new ValidationException($"Invalid timezone identifier '{timeZoneId}'.");
         }
 
-        // 2. Chuẩn hóa StartTime về UTC
-        var startTimeUtc = command.StartTime.Kind == DateTimeKind.Utc
-            ? command.StartTime
-            : DateTime.SpecifyKind(command.StartTime, DateTimeKind.Utc);
+        // 1. Treat command.StartTime as wall-clock time in the property's local timezone (Unspecified Kind)
+        var localStartTime = DateTime.SpecifyKind(command.StartTime, DateTimeKind.Unspecified);
 
-        // 3. Convert UTC -> Local để validate
-        var startTimePropertyLocal = TimeZoneInfo.ConvertTimeFromUtc(startTimeUtc, timeZone);
-        ValidateSlot(startTimePropertyLocal);
+        // 2. Validate slot constraints in local time (business hours 09:00 - 20:00, 30-minute boundaries)
+        ValidateSlot(localStartTime);
 
+        // 3. Convert safely from Local Time to UTC handling Daylight Saving Time (DST)
+        var startTimeUtc = ConvertToUtcSafe(localStartTime, propertyTimeZone);
         var endTimeUtc = startTimeUtc.AddMinutes(SlotMinutes);
 
+        // 4. Check for existing slot conflicts using UTC timestamps
         if (await repository.HasConflictAsync(
                 command.PropertyId, startTimeUtc, endTimeUtc, cancellationToken))
         {
             throw new BookingConflictException("The viewing slot is already booked.");
         }
 
+        // 5. Persist the booking entity
         var viewing = await repository.CreateAsync(
             new Viewing
             {
@@ -94,18 +93,21 @@ public sealed class ViewingService(
             throw new ValidationException($"Invalid timezone identifier '{timeZoneId}'.");
         }
 
-        // Xác định range query DB (lấy dư biên để tránh hụt slot do lệch TimeZone)
-        var localStartFirstDay = from.ToDateTime(new TimeOnly(9, 0));
-        var localEndLastDay = to.ToDateTime(new TimeOnly(20, 0));
+        // Expand query range to full local day boundaries (Start of 'from' day to Start of 'to + 1' day)
+        // to safely prevent missing booked slots due to timezone conversions
+        var rangeStartUtc = ConvertToUtcSafe(from.ToDateTime(TimeOnly.MinValue), propertyTimeZone);
+        var rangeEndUtc = ConvertToUtcSafe(to.AddDays(1).ToDateTime(TimeOnly.MinValue), propertyTimeZone);
 
-        var rangeStartUtc = ConvertToUtcSafe(localStartFirstDay, propertyTimeZone);
-        var rangeEndUtc = ConvertToUtcSafe(localEndLastDay, propertyTimeZone);
-
-        var booked = await repository.GetByPropertyAndDateRangeAsync(
+        var bookedViewings = await repository.GetByPropertyAndDateRangeAsync(
             propertyId,
             rangeStartUtc,
             rangeEndUtc,
             cancellationToken);
+
+        // Store booked slots in a HashSet for O(1) fast lookup
+        var bookedLookup = bookedViewings
+            .Select(v => (v.StartTime, v.EndTime))
+            .ToHashSet();
 
         var slots = new List<ViewingSlotDto>();
 
@@ -118,18 +120,19 @@ public sealed class ViewingService(
             {
                 var localEnd = localStart.AddMinutes(SlotMinutes);
 
-                // Bỏ qua nếu thời gian local rơi vào khung giờ không tồn tại do đổi giờ DST
+                // Skip invalid local times caused by Spring Forward DST transitions
                 if (!propertyTimeZone.IsInvalidTime(localStart))
                 {
                     var slotStartUtc = ConvertToUtcSafe(localStart, propertyTimeZone);
                     var slotEndUtc = ConvertToUtcSafe(localEnd, propertyTimeZone);
 
-                    var isBooked = booked.Any(
-                        v => v.StartTime < slotEndUtc && v.EndTime > slotStartUtc);
+                    // O(1) overlap check against existing bookings
+                    var isBooked = bookedLookup.Any(
+                        b => b.StartTime < slotEndUtc && b.EndTime > slotStartUtc);
 
                     if (!isBooked)
                     {
-                        slots.Add(new ViewingSlotDto(slotStartUtc, slotEndUtc));
+                        slots.Add(new ViewingSlotDto(localStart, localEnd, slotStartUtc, slotEndUtc));
                     }
                 }
 
@@ -142,17 +145,21 @@ public sealed class ViewingService(
 
     private static DateTime ConvertToUtcSafe(DateTime localDateTime, TimeZoneInfo timeZone)
     {
-        // Xử lý trường hợp DST Invalid Time bằng cách dịch chuyển về thời gian hợp lệ
-        if (timeZone.IsInvalidTime(localDateTime))
-        {
-            var adjustment = timeZone.GetAdjustmentRules()
-                .FirstOrDefault(r => r.DateStart <= localDateTime && r.DateEnd >= localDateTime);
+        var unspecifiedTime = DateTime.SpecifyKind(localDateTime, DateTimeKind.Unspecified);
 
+        // Handle DST transitions where local wall-clock times do not exist (Spring Forward)
+        if (timeZone.IsInvalidTime(unspecifiedTime))
+        {
+            // Find the active adjustment rule covering the target date
+            var adjustment = timeZone.GetAdjustmentRules()
+                .FirstOrDefault(r => r.DateStart <= unspecifiedTime && r.DateEnd >= unspecifiedTime);
+
+            // Shift time by the active DaylightDelta, falling back to 1 hour if unspecified
             var delta = adjustment?.DaylightDelta ?? TimeSpan.FromHours(1);
-            localDateTime = localDateTime.Add(delta);
+            unspecifiedTime = unspecifiedTime.Add(delta);
         }
 
-        return TimeZoneInfo.ConvertTimeToUtc(localDateTime, timeZone);
+        return TimeZoneInfo.ConvertTimeToUtc(unspecifiedTime, timeZone);
     }
 
     private static void ValidateGetAvailableInputs(int propertyId, DateOnly from, DateOnly to)
