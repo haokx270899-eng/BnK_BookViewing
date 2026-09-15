@@ -84,10 +84,10 @@ public sealed class ViewingService(
     }
 
     public async Task<IReadOnlyList<ViewingSlotDto>> GetAvailableAsync(
-        int propertyId,
-        DateOnly from,
-        DateOnly to,
-        CancellationToken cancellationToken)
+            int propertyId,
+            DateOnly from,
+            DateOnly to,
+            CancellationToken cancellationToken)
     {
         ValidateGetAvailableInputs(propertyId, from, to);
 
@@ -104,8 +104,6 @@ public sealed class ViewingService(
             throw new ValidationException($"Invalid timezone identifier '{timeZoneId}'.");
         }
 
-        // Expand query range to full local day boundaries (Start of 'from' day to Start of 'to + 1' day)
-        // to safely prevent missing booked slots due to timezone conversions
         var rangeStartUtc = ConvertToUtcSafe(from.ToDateTime(TimeOnly.MinValue), propertyTimeZone);
         var rangeEndUtc = ConvertToUtcSafe(to.AddDays(1).ToDateTime(TimeOnly.MinValue), propertyTimeZone);
 
@@ -115,10 +113,9 @@ public sealed class ViewingService(
             rangeEndUtc,
             cancellationToken);
 
-        // Store booked slots in a HashSet for O(1) fast lookup
         var bookedLookup = bookedViewings
             .Select(v => (v.StartTime, v.EndTime))
-            .ToHashSet();
+            .ToList();
 
         var slots = new List<ViewingSlotDto>();
 
@@ -131,13 +128,11 @@ public sealed class ViewingService(
             {
                 var localEnd = localStart.AddMinutes(SlotMinutes);
 
-                // Skip invalid local times caused by Spring Forward DST transitions
                 if (!propertyTimeZone.IsInvalidTime(localStart))
                 {
                     var slotStartUtc = ConvertToUtcSafe(localStart, propertyTimeZone);
                     var slotEndUtc = ConvertToUtcSafe(localEnd, propertyTimeZone);
 
-                    // O(1) overlap check against existing bookings
                     var isBooked = bookedLookup.Any(
                         b => b.StartTime < slotEndUtc && b.EndTime > slotStartUtc);
 
@@ -153,7 +148,6 @@ public sealed class ViewingService(
 
         return slots;
     }
-
     private static DateTime ConvertToUtcSafe(DateTime localDateTime, TimeZoneInfo timeZone)
     {
         var unspecifiedTime = DateTime.SpecifyKind(localDateTime, DateTimeKind.Unspecified);
